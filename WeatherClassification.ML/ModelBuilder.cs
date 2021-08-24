@@ -16,7 +16,6 @@ namespace WeatherClassification.ML
         private MLContext _mlContext = new MLContext(seed: 1);
         private string _trainDataFilePath;
         private string _testFileDataPath;
-        private string _resultsSavePath;
 
         private string _modelZipPath;
         private string _modelLogsPath;
@@ -25,10 +24,19 @@ namespace WeatherClassification.ML
         public ModelBuilder(string dataPath, ImageClassificationTrainer.Architecture arch)
         {
             _arch = arch;
-            (_trainDataFilePath, _testFileDataPath) = DataPreparation.GenerateDataSetFiles(dataPath);
+            (_trainDataFilePath, _testFileDataPath) = Helpers.GenerateDataSetFiles(dataPath, 0);
 
-            _modelZipPath = GetAbsolutePath($"Models/MLModel-{_arch}.zip");
-            _modelLogsPath = GetAbsolutePath($"Models/ML-Model-{_arch}-Logs.txt");
+            var modelDirectory = Helpers.GetAbsolutePath($"Models");
+            Directory.CreateDirectory(modelDirectory);
+
+            _modelZipPath = Helpers.GetAbsolutePath(Path.Combine(modelDirectory, $"MLModel-{_arch}.zip"));
+            _modelLogsPath = Helpers.GetAbsolutePath(Path.Combine(modelDirectory, $"ML-Model-{_arch}-Logs.txt"));
+
+            if (File.Exists(_modelZipPath))
+                File.Delete(_modelZipPath);
+
+            if (File.Exists(_modelLogsPath))
+                File.Delete(_modelLogsPath);
         }
 
         public void CreateModel()
@@ -41,29 +49,21 @@ namespace WeatherClassification.ML
                                             allowQuoting: true,
                                             allowSparse: false);
 
-            // Load Testing Data
-            IDataView testingDataView = _mlContext.Data.LoadFromTextFile<ModelInput>(
-                                            path: _testFileDataPath,
-                                            hasHeader: true,
-                                            separatorChar: '\t',
-                                            allowQuoting: true,
-                                            allowSparse: false);
-
             // Build training pipeline
             IEstimator<ITransformer> trainingPipeline = BuildTrainingPipeline(_mlContext);
 
             // Train Model
-            ITransformer mlModel = TrainModel(_mlContext, trainingDataView, trainingPipeline);
+            ITransformer mlModel = TrainModel(trainingDataView, trainingPipeline);
 
             // Evaluate quality of Model
-            Evaluate(_mlContext, testingDataView, trainingPipeline);
+            Evaluate(_mlContext, trainingDataView, trainingPipeline);
 
             // Save model
-            SaveModel(_mlContext, mlModel, _modelZipPath, trainingDataView.Schema);
+            SaveModel(_mlContext, mlModel, trainingDataView.Schema);
         }
 
         #region Model Creation
-        public static IEstimator<ITransformer> BuildTrainingPipeline(MLContext mlContext)
+        private IEstimator<ITransformer> BuildTrainingPipeline(MLContext mlContext)
         {
             // Data process configuration with pipeline data transformations 
             var dataProcessPipeline = mlContext.Transforms.Conversion.MapValueToKey("Label", "Label")
@@ -71,67 +71,79 @@ namespace WeatherClassification.ML
                                       .Append(mlContext.Transforms.CopyColumns("Features", "ImageSource_featurized"));
 
             // Set the training algorithm 
-            var trainer = mlContext.MulticlassClassification.Trainers.ImageClassification(new ImageClassificationTrainer.Options() { LabelColumnName = "Label", FeatureColumnName = "Features" })
+            var trainer = mlContext.MulticlassClassification.Trainers.ImageClassification(new ImageClassificationTrainer.Options() { LabelColumnName = "Label", FeatureColumnName = "Features", Arch = _arch })
                                       .Append(mlContext.Transforms.Conversion.MapKeyToValue("PredictedLabel", "PredictedLabel"));
 
             var trainingPipeline = dataProcessPipeline.Append(trainer);
-
             return trainingPipeline;
         }
 
-        public static ITransformer TrainModel(MLContext mlContext, IDataView trainingDataView, IEstimator<ITransformer> trainingPipeline)
+        private ITransformer TrainModel(IDataView trainingDataView, IEstimator<ITransformer> trainingPipeline)
         {
-            Console.WriteLine("=============== Training  model ===============");
-
+            Log(Environment.NewLine);
+            Log($"=============== Training  model (architecture: {_arch}) ===============");
             ITransformer model = trainingPipeline.Fit(trainingDataView);
-
-            Console.WriteLine("=============== End of training process ===============");
+            Log("=============== End of training process ===============");
             return model;
         }
 
-        private static void Evaluate(MLContext mlContext, IDataView testingDataView, IEstimator<ITransformer> trainingPipeline)
+        private void Evaluate(MLContext mlContext, IDataView trainingDataView, IEstimator<ITransformer> trainingPipeline)
         {
-            // Cross-Validate with single dataset (since we don't have two datasets, one for training and for evaluate)
-            // in order to evaluate and get the model's accuracy metrics
-            Console.WriteLine("=============== Cross-validating to get model's accuracy metrics ===============");
-            var crossValidationResults = mlContext.MulticlassClassification.CrossValidate(testingDataView, trainingPipeline, numberOfFolds: 5, labelColumnName: "Label");
+            Log("=============== Cross-validating to get model's accuracy metrics ===============");
+            var crossValidationResults = mlContext.MulticlassClassification.CrossValidate(trainingDataView, trainingPipeline, numberOfFolds: 10, labelColumnName: "Label");
             PrintMulticlassClassificationFoldsAverageMetrics(crossValidationResults);
+            foreach (var result in crossValidationResults)
+            {
+                Log($"Fold #{result.Fold} details");
+                PrintMulticlassClassificationMetrics(result.Metrics);
+            }
         }
 
-        private static void SaveModel(MLContext mlContext, ITransformer mlModel, string modelRelativePath, DataViewSchema modelInputSchema)
+        private void SaveModel(MLContext mlContext, ITransformer mlModel, DataViewSchema modelInputSchema)
         {
             // Save/persist the trained model to a .ZIP file
             Console.WriteLine($"=============== Saving the model  ===============");
-            mlContext.Model.Save(mlModel, modelInputSchema, GetAbsolutePath(modelRelativePath));
-            Console.WriteLine("The model is saved to {0}", GetAbsolutePath(modelRelativePath));
+            mlContext.Model.Save(mlModel, modelInputSchema, _modelZipPath);
+            Console.WriteLine("The model is saved to {0}", _modelZipPath);
         }
         #endregion
 
         #region Helpers
-        public static string GetAbsolutePath(string relativePath)
+        private void Log(string message)
         {
-            var _dataRoot = new FileInfo(typeof(ModelBuilder).Assembly.Location);
-            string assemblyFolderPath = _dataRoot.Directory.FullName;
-            string fullPath = Path.Combine(assemblyFolderPath, relativePath);
-            return fullPath;
+            using (var logFileWriter = File.AppendText(_modelLogsPath))
+            {
+                logFileWriter.WriteLine($"[{DateTime.UtcNow.ToString("u")}] | {message}");
+            }
         }
 
-        public static void PrintMulticlassClassificationMetrics(MulticlassClassificationMetrics metrics)
+        public void PrintConfusionMatrix(ConfusionMatrix confusionMatrix)
         {
-            Console.WriteLine($"************************************************************");
-            Console.WriteLine($"*    Metrics for multi-class classification model   ");
-            Console.WriteLine($"*-----------------------------------------------------------");
-            Console.WriteLine($"    MacroAccuracy = {metrics.MacroAccuracy:0.####}, a value between 0 and 1, the closer to 1, the better");
-            Console.WriteLine($"    MicroAccuracy = {metrics.MicroAccuracy:0.####}, a value between 0 and 1, the closer to 1, the better");
-            Console.WriteLine($"    LogLoss = {metrics.LogLoss:0.####}, the closer to 0, the better");
+            Log($"************************************************************");
+            Log($"*   Confusion Matrix   ");
+            Log($"*-----------------------------------------------------------");
+            Log(confusionMatrix.GetFormattedConfusionTable());
+            Log($"************************************************************");
+        }
+
+        public void PrintMulticlassClassificationMetrics(MulticlassClassificationMetrics metrics)
+        {
+            Log($"************************************************************");
+            Log($"*    Metrics for multi-class classification model   ");
+            Log($"*-----------------------------------------------------------");
+            Log($"    MacroAccuracy = {metrics.MacroAccuracy:0.####}, a value between 0 and 1, the closer to 1, the better");
+            Log($"    MicroAccuracy = {metrics.MicroAccuracy:0.####}, a value between 0 and 1, the closer to 1, the better");
+            Log($"    LogLoss = {metrics.LogLoss:0.####}, the closer to 0, the better");
             for (int i = 0; i < metrics.PerClassLogLoss.Count; i++)
             {
-                Console.WriteLine($"    LogLoss for class {i + 1} = {metrics.PerClassLogLoss[i]:0.####}, the closer to 0, the better");
+                Log($"    LogLoss for class {i + 1} = {metrics.PerClassLogLoss[i]:0.####}, the closer to 0, the better");
             }
-            Console.WriteLine($"************************************************************");
+            Log($"************************************************************");
+
+            PrintConfusionMatrix(metrics.ConfusionMatrix);
         }
 
-        public static void PrintMulticlassClassificationFoldsAverageMetrics(IEnumerable<TrainCatalogBase.CrossValidationResult<MulticlassClassificationMetrics>> crossValResults)
+        public void PrintMulticlassClassificationFoldsAverageMetrics(IEnumerable<TrainCatalogBase.CrossValidationResult<MulticlassClassificationMetrics>> crossValResults)
         {
             var metricsInMultipleFolds = crossValResults.Select(r => r.Metrics);
 
@@ -155,15 +167,14 @@ namespace WeatherClassification.ML
             var logLossReductionStdDeviation = Metrics.CalculateStandardDeviation(logLossReductionValues);
             var logLossReductionConfidenceInterval95 = Metrics.CalculateConfidenceInterval95(logLossReductionValues);
 
-            Console.WriteLine($"*************************************************************************************************************");
-            Console.WriteLine($"*       Metrics for Multi-class Classification model      ");
-            Console.WriteLine($"*------------------------------------------------------------------------------------------------------------");
-            Console.WriteLine($"*       Average MicroAccuracy:    {microAccuracyAverage:0.###}  - Standard deviation: ({microAccuraciesStdDeviation:#.###})  - Confidence Interval 95%: ({microAccuraciesConfidenceInterval95:#.###})");
-            Console.WriteLine($"*       Average MacroAccuracy:    {macroAccuracyAverage:0.###}  - Standard deviation: ({macroAccuraciesStdDeviation:#.###})  - Confidence Interval 95%: ({macroAccuraciesConfidenceInterval95:#.###})");
-            Console.WriteLine($"*       Average LogLoss:          {logLossAverage:#.###}  - Standard deviation: ({logLossStdDeviation:#.###})  - Confidence Interval 95%: ({logLossConfidenceInterval95:#.###})");
-            Console.WriteLine($"*       Average LogLossReduction: {logLossReductionAverage:#.###}  - Standard deviation: ({logLossReductionStdDeviation:#.###})  - Confidence Interval 95%: ({logLossReductionConfidenceInterval95:#.###})");
-            Console.WriteLine($"*************************************************************************************************************");
-
+            Log($"*************************************************************************************************************");
+            Log($"*       Metrics for Multi-class Classification model      ");
+            Log($"*------------------------------------------------------------------------------------------------------------");
+            Log($"*       Average MicroAccuracy:    {microAccuracyAverage:0.###}  - Standard deviation: ({microAccuraciesStdDeviation:#.###})  - Confidence Interval 95%: ({microAccuraciesConfidenceInterval95:#.###})");
+            Log($"*       Average MacroAccuracy:    {macroAccuracyAverage:0.###}  - Standard deviation: ({macroAccuraciesStdDeviation:#.###})  - Confidence Interval 95%: ({macroAccuraciesConfidenceInterval95:#.###})");
+            Log($"*       Average LogLoss:          {logLossAverage:#.###}  - Standard deviation: ({logLossStdDeviation:#.###})  - Confidence Interval 95%: ({logLossConfidenceInterval95:#.###})");
+            Log($"*       Average LogLossReduction: {logLossReductionAverage:#.###}  - Standard deviation: ({logLossReductionStdDeviation:#.###})  - Confidence Interval 95%: ({logLossReductionConfidenceInterval95:#.###})");
+            Log($"*************************************************************************************************************");
         }
         #endregion
     }

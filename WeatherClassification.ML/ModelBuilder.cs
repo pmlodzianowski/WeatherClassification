@@ -9,50 +9,57 @@ using WeatherClassification.ML.Model;
 
 namespace WeatherClassification.ML
 {
-    public abstract class BaseModelBuilder
+    public class ModelBuilder
     {
-        public abstract string TRAIN_DATA_FILEPATH { get; protected set; }
-        public abstract string TEST_DATA_FILEPATH { get; protected set; }
-        public abstract string MODEL_FILEPATH { get; protected set; }
-
-        public BaseModelBuilder()
-        {
-
-        }
-
         // Create MLContext to be shared across the model creation workflow objects 
         // Set a random seed for repeatable/deterministic results across multiple trainings.
-        private MLContext mlContext = new MLContext(seed: 1);
+        private MLContext _mlContext = new MLContext(seed: 1);
+        private string _trainDataFilePath;
+        private string _testFileDataPath;
+        private string _resultsSavePath;
+
+        private string _modelZipPath;
+        private string _modelLogsPath;
+        private ImageClassificationTrainer.Architecture _arch;
+
+        public ModelBuilder(string dataPath, ImageClassificationTrainer.Architecture arch)
+        {
+            _arch = arch;
+            (_trainDataFilePath, _testFileDataPath) = DataPreparation.GenerateDataSetFiles(dataPath);
+
+            _modelZipPath = GetAbsolutePath($"Models/MLModel-{_arch}.zip");
+            _modelLogsPath = GetAbsolutePath($"Models/ML-Model-{_arch}-Logs.txt");
+        }
 
         public void CreateModel()
         {
             // Load Training Data
-            IDataView trainingDataView = mlContext.Data.LoadFromTextFile<ModelInput>(
-                                            path: TRAIN_DATA_FILEPATH,
+            IDataView trainingDataView = _mlContext.Data.LoadFromTextFile<ModelInput>(
+                                            path: _trainDataFilePath,
                                             hasHeader: true,
                                             separatorChar: '\t',
                                             allowQuoting: true,
                                             allowSparse: false);
 
             // Load Testing Data
-            IDataView testingDataView = mlContext.Data.LoadFromTextFile<ModelInput>(
-                                            path: TEST_DATA_FILEPATH,
+            IDataView testingDataView = _mlContext.Data.LoadFromTextFile<ModelInput>(
+                                            path: _testFileDataPath,
                                             hasHeader: true,
                                             separatorChar: '\t',
                                             allowQuoting: true,
                                             allowSparse: false);
 
             // Build training pipeline
-            IEstimator<ITransformer> trainingPipeline = BuildTrainingPipeline(mlContext);
+            IEstimator<ITransformer> trainingPipeline = BuildTrainingPipeline(_mlContext);
 
             // Train Model
-            ITransformer mlModel = TrainModel(mlContext, trainingDataView, trainingPipeline);
+            ITransformer mlModel = TrainModel(_mlContext, trainingDataView, trainingPipeline);
 
             // Evaluate quality of Model
-            Evaluate(mlContext, testingDataView, trainingPipeline);
+            Evaluate(_mlContext, testingDataView, trainingPipeline);
 
             // Save model
-            SaveModel(mlContext, mlModel, MODEL_FILEPATH, trainingDataView.Schema);
+            SaveModel(_mlContext, mlModel, _modelZipPath, trainingDataView.Schema);
         }
 
         #region Model Creation
@@ -103,24 +110,10 @@ namespace WeatherClassification.ML
         #region Helpers
         public static string GetAbsolutePath(string relativePath)
         {
-            var _dataRoot = new FileInfo(typeof(Program).Assembly.Location);
+            var _dataRoot = new FileInfo(typeof(ModelBuilder).Assembly.Location);
             string assemblyFolderPath = _dataRoot.Directory.FullName;
             string fullPath = Path.Combine(assemblyFolderPath, relativePath);
             return fullPath;
-        }
-
-        public static double CalculateStandardDeviation(IEnumerable<double> values)
-        {
-            double average = values.Average();
-            double sumOfSquaresOfDifferences = values.Select(val => (val - average) * (val - average)).Sum();
-            double standardDeviation = Math.Sqrt(sumOfSquaresOfDifferences / (values.Count() - 1));
-            return standardDeviation;
-        }
-
-        public static double CalculateConfidenceInterval95(IEnumerable<double> values)
-        {
-            double confidenceInterval95 = 1.96 * CalculateStandardDeviation(values) / Math.Sqrt((values.Count() - 1));
-            return confidenceInterval95;
         }
 
         public static void PrintMulticlassClassificationMetrics(MulticlassClassificationMetrics metrics)
@@ -144,23 +137,23 @@ namespace WeatherClassification.ML
 
             var microAccuracyValues = metricsInMultipleFolds.Select(m => m.MicroAccuracy);
             var microAccuracyAverage = microAccuracyValues.Average();
-            var microAccuraciesStdDeviation = CalculateStandardDeviation(microAccuracyValues);
-            var microAccuraciesConfidenceInterval95 = CalculateConfidenceInterval95(microAccuracyValues);
+            var microAccuraciesStdDeviation = Metrics.CalculateStandardDeviation(microAccuracyValues);
+            var microAccuraciesConfidenceInterval95 = Metrics.CalculateConfidenceInterval95(microAccuracyValues);
 
             var macroAccuracyValues = metricsInMultipleFolds.Select(m => m.MacroAccuracy);
             var macroAccuracyAverage = macroAccuracyValues.Average();
-            var macroAccuraciesStdDeviation = CalculateStandardDeviation(macroAccuracyValues);
-            var macroAccuraciesConfidenceInterval95 = CalculateConfidenceInterval95(macroAccuracyValues);
+            var macroAccuraciesStdDeviation = Metrics.CalculateStandardDeviation(macroAccuracyValues);
+            var macroAccuraciesConfidenceInterval95 = Metrics.CalculateConfidenceInterval95(macroAccuracyValues);
 
             var logLossValues = metricsInMultipleFolds.Select(m => m.LogLoss);
             var logLossAverage = logLossValues.Average();
-            var logLossStdDeviation = CalculateStandardDeviation(logLossValues);
-            var logLossConfidenceInterval95 = CalculateConfidenceInterval95(logLossValues);
+            var logLossStdDeviation = Metrics.CalculateStandardDeviation(logLossValues);
+            var logLossConfidenceInterval95 = Metrics.CalculateConfidenceInterval95(logLossValues);
 
             var logLossReductionValues = metricsInMultipleFolds.Select(m => m.LogLossReduction);
             var logLossReductionAverage = logLossReductionValues.Average();
-            var logLossReductionStdDeviation = CalculateStandardDeviation(logLossReductionValues);
-            var logLossReductionConfidenceInterval95 = CalculateConfidenceInterval95(logLossReductionValues);
+            var logLossReductionStdDeviation = Metrics.CalculateStandardDeviation(logLossReductionValues);
+            var logLossReductionConfidenceInterval95 = Metrics.CalculateConfidenceInterval95(logLossReductionValues);
 
             Console.WriteLine($"*************************************************************************************************************");
             Console.WriteLine($"*       Metrics for Multi-class Classification model      ");

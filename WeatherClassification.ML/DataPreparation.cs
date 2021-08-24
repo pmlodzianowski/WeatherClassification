@@ -5,7 +5,7 @@ namespace WeatherClassification.ML
 {
     public static class DataPreparation
     {
-        public static (string trainDatasetPath, string testDatasetPath) GenerateDataSetFile(string dataPath, uint percentOfTotalImagesForTests = 15)
+        public static (string trainDatasetPath, string testDatasetPath) GenerateDataSetFiles(string dataPath, uint percentOfTotalImagesForTests = 15)
         {
             var dataSetTrainFilePath = Path.Combine(dataPath, "dataset-train.tsv");
             var dataSetTestFilePath = Path.Combine(dataPath, "dataset-test.tsv");

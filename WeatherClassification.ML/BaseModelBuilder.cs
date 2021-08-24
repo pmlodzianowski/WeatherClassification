@@ -22,9 +22,9 @@ namespace WeatherClassification.ML
 
         // Create MLContext to be shared across the model creation workflow objects 
         // Set a random seed for repeatable/deterministic results across multiple trainings.
-        private static MLContext mlContext = new MLContext(seed: 1);
+        private MLContext mlContext = new MLContext(seed: 1);
 
-        public static void CreateModel()
+        public void CreateModel()
         {
             // Load Training Data
             IDataView trainingDataView = mlContext.Data.LoadFromTextFile<ModelInput>(

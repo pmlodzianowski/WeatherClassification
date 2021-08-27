@@ -15,7 +15,6 @@ namespace WeatherClassification.ML
         // Set a random seed for repeatable/deterministic results across multiple trainings.
         private MLContext _mlContext = new MLContext(seed: 1);
         private string _trainDataFilePath;
-        private string _testFileDataPath;
 
         private string _modelZipPath;
         private string _modelLogsPath;
@@ -23,8 +22,8 @@ namespace WeatherClassification.ML
 
         public ModelBuilder(string dataPath, ImageClassificationTrainer.Architecture arch)
         {
+            _trainDataFilePath = Helpers.GenerateDataSetFiles(dataPath);
             _arch = arch;
-            (_trainDataFilePath, _testFileDataPath) = Helpers.GenerateDataSetFiles(dataPath, 0);
 
             var modelDirectory = Helpers.GetAbsolutePath($"Models");
             Directory.CreateDirectory(modelDirectory);
@@ -119,11 +118,7 @@ namespace WeatherClassification.ML
 
         public void PrintConfusionMatrix(ConfusionMatrix confusionMatrix)
         {
-            Log($"************************************************************");
-            Log($"*   Confusion Matrix   ");
-            Log($"*-----------------------------------------------------------");
             Log(confusionMatrix.GetFormattedConfusionTable());
-            Log($"************************************************************");
         }
 
         public void PrintMulticlassClassificationMetrics(MulticlassClassificationMetrics metrics)

@@ -10,7 +10,5 @@ namespace WeatherClassification.ML.Model
 
         [ColumnName("ImageSource"), LoadColumn(1)]
         public string ImageSource { get; set; }
-
-
     }
 }

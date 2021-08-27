@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace WeatherClassification.ML
+﻿namespace WeatherClassification.ML
 {
     class Program
     {

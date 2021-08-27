@@ -19,15 +19,21 @@ namespace WeatherClassification
             var resultFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), $"classification-results-{DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss")}.tsv");
 
             PredictionEngine prdEngine = new(modelPath);
+            long dtStart, dtEnd;
             using (var fileWriter = File.AppendText(resultFilePath))
             {
                 fileWriter.WriteLine("ImageSource\tPrediction\tScores");
+
+                dtStart = DateTime.Now.Ticks;
                 foreach (var input in modelInputs)
                 {
                     var results = prdEngine.Predict(input);
-                    fileWriter.WriteLine($"{input.ImageSource}\t{results.Prediction}\t{string.Join(", ", results.Score)}");
+                    fileWriter.WriteLine($"{input.ImageSource}\t{results.Prediction}\t{string.Join("; ", results.Score)}");
                 }
+                dtEnd = DateTime.Now.Ticks;
             }
+
+            Console.WriteLine($"\nElapsed time: {TimeSpan.FromTicks(dtEnd-dtStart)}\n");
         }
     }
 }
